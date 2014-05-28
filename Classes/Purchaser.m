@@ -7,7 +7,8 @@
 {
     ProductCache *_cache;
     NSMutableDictionary *_observers;
-    NSMutableDictionary *_blocks;
+    NSMutableDictionary *_errorBlocks;
+    NSMutableDictionary *_successBlocks;
 }
 
 - (id)init
@@ -16,7 +17,8 @@
     {
         _cache = [[ProductCache alloc] init];
         _observers = [[NSMutableDictionary alloc] init];
-        _blocks = [[NSMutableDictionary alloc] init];
+        _errorBlocks = [[NSMutableDictionary alloc] init];
+        _successBlocks = [[NSMutableDictionary alloc] init];
 
         [[SKPaymentQueue defaultQueue] addTransactionObserver:self];
     }
@@ -33,15 +35,16 @@
     [array addObject:block];
 }
 
-- (void)buyProduct:(NSString *)productId block:(void (^)(NSError *))block
+- (void)buyProduct:(NSString *)productId success:(void(^)(SKPaymentTransaction *transaction))successBlock error:(void(^)(NSError *error))errorBlock
 {
     [_cache loadProduct:productId block:^(SKProduct *product, NSError *error)
      {
          if (error)
-             block(error);
+             errorBlock(error);
          else
          {
-             [_blocks setObject:block forKey:productId];
+             [_errorBlocks setObject:errorBlock forKey:productId];
+             [_successBlocks setObject:successBlock forKey:productId];
              [[SKPaymentQueue defaultQueue] addPayment:[SKPayment paymentWithProduct:product]];
          }
      }];
@@ -53,18 +56,20 @@
     {
         if (![self transactionIsComplete:t])
             continue;
-        
-        void (^block)(NSError *) = _blocks[t.payment.productIdentifier];
 
-        if (block)
-        {
-            block(t.error);
-            [_blocks removeObjectForKey:t.payment.productIdentifier];
+        if (t.error != nil) {
+            void (^errorBlock)(NSError *) = _errorBlocks[t.payment.productIdentifier];
+            errorBlock(t.error);
+            [_errorBlocks removeObjectForKey:t.payment.productIdentifier];
         }
         
-        if ([self transactionIsSuccess:t])
+        if ([self transactionIsSuccess:t]) {
+            void (^successBlock)(SKPaymentTransaction *) = _successBlocks[t.payment.productIdentifier];
+            successBlock(t);
+            [_successBlocks removeObjectForKey:t.payment.productIdentifier];
             [self notifyObserversForProduct:t.payment.productIdentifier transaction:t];
-        
+        }
+
         [[SKPaymentQueue defaultQueue] finishTransaction:t];
     }
 }
